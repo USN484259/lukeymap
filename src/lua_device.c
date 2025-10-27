@@ -645,7 +645,7 @@ static int l_uinput_create(struct lua_State *ls)
 static int l_uinput_close(struct lua_State *ls)
 {
 	struct libevdev_uinput *dev;
-	dev = (struct libevdev_uinput *)luaL_checkudata(ls, 1, REG_NAME_UINPUT);
+	dev = *(struct libevdev_uinput **)luaL_checkudata(ls, 1, REG_NAME_UINPUT);
 	libevdev_uinput_destroy(dev);
 
 	lua_pushnil(ls);
@@ -656,7 +656,7 @@ static int l_uinput_close(struct lua_State *ls)
 static int l_uinput_name(struct lua_State *ls)
 {
 	struct libevdev_uinput *dev;
-	dev = (struct libevdev_uinput *)luaL_checkudata(ls, 1, REG_NAME_UINPUT);
+	dev = *(struct libevdev_uinput **)luaL_checkudata(ls, 1, REG_NAME_UINPUT);
 	lua_pushstring(ls, libevdev_uinput_get_devnode(dev));
 	return 1;
 }
@@ -667,7 +667,7 @@ static int l_uinput_write(struct lua_State *ls)
 	int len;
 	struct libevdev_uinput *dev;
 
-	dev = (struct libevdev_uinput *)luaL_checkudata(ls, 1, REG_NAME_UINPUT);
+	dev = *(struct libevdev_uinput **)luaL_checkudata(ls, 1, REG_NAME_UINPUT);
 	luaL_checktype(ls, 2, LUA_TTABLE);
 	len = luaL_len(ls, 2);
 	for (int i = 1; i <= len; ++i) {
