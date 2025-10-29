@@ -656,8 +656,13 @@ static int l_uinput_close(struct lua_State *ls)
 static int l_uinput_name(struct lua_State *ls)
 {
 	struct libevdev_uinput *dev;
+	const char *node_name;
+	const char *ptr = NULL;
 	dev = *(struct libevdev_uinput **)luaL_checkudata(ls, 1, REG_NAME_UINPUT);
-	lua_pushstring(ls, libevdev_uinput_get_devnode(dev));
+	node_name = libevdev_uinput_get_devnode(dev);
+	if (node_name)
+		ptr = strrchr(node_name, '/');
+	lua_pushstring(ls, ptr ? ptr + 1 : node_name);
 	return 1;
 }
 

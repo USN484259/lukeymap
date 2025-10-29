@@ -1,6 +1,7 @@
 local module_name, config_file = ...
 
 local print_table = require("print_table")
+local device_manager = require("device_manager")
 
 local EV_KEY = device.type_num("EV_KEY")
 
@@ -8,13 +9,13 @@ local function table_join(a, b)
 	return table.move(b, 1, #b, #a + 1, a)
 end
 
-local KeyParser = setmetatable({}, {
+local KeyParser = {
 	__index = function(self, key)
-		local code, _ = device.code_num("KEY_" .. key)
+		local code, _ = device.code_num(self.prefix .. key)
 		if not code then error("unknown key " .. key) end
 		return code
 	end
-})
+}
 
 local function load_config(config_file)
 	local raw_config = require(config_file)
@@ -164,14 +165,13 @@ end
 
 
 local device_map = {}
-local name_map = {}
 
 local function handle_event(dev)
 	local rec = device_map[dev]
 	if not rec then return end
 	local ev_list = dev:read()
 	ev_list = remap(rec.rules, rec.key_state, ev_list)
-	rec.udev:write(ev_list)
+	rec.sink:write(ev_list)
 end
 
 local function match_dev(config, info)
@@ -199,50 +199,34 @@ end
 local function main(config_file)
 	local config = load_config(config_file)
 
-	return function (op, name)
-		local rec = name_map[name]
-
-		if op == "add" then
-			if rec then return false end
-			local dev = device.open(name)
-			local info = dev:info()
-			print(op, name)
-			-- print_table(info)
-			local rules = match_dev(config, info)
-			if not rules then
-				dev:close()
-				return false
-			end
-			local udev = device.create(dev)
-			local udev_name = udev:name()
-			local pos = string.find(udev_name, "/[^/]+$")
-			if pos then udev_name = string.sub(udev_name, pos + 1) end
-			print("created udev for " .. name, udev_name)
-
-			local rec = { name = name, udev_name = udev_name, info = info, dev = dev, udev = udev, rules = rules, key_state = {} }
-			device_map[dev] = rec
-			name_map[name] = rec
-			name_map[udev_name] = rec
+	return device_manager(
+		-- match function
+		function (info) return match_dev(config, info) end,
+		-- new function
+		function(rec, rules)
+			local dev = rec.src
+			print("new mapping", rec.src_name, "=>", rec.sink_name)
 
 			dev:handler(handle_event)
 			dev:grab(true)
 			dev:monitor(true)
-		elseif op == "del" then
-			if not rec then return false end
-			print("deleted udev for " .. name, rec.udev_name)
-			device_map[rec.dev] = nil
-			name_map[rec.name] = nil
-			name_map[rec.udev_name] = nil
-			rec.udev:close()
-			rec.dev:close()
+			rec.rules = rules
+			rec.key_state = {}
+			device_map[dev] = rec
+		end,
+		-- del function
+		function(rec)
+			print("del mapping", rec.src_name, "=>", rec.sink_name)
+			device_map[rec.src] = nil
 		end
-		return true
-	end
+	)
 end
 
 
 if module_name == sys.main then
-	-- global KEY
-	KEY = KeyParser
+	-- global KEY and BTN
+	KEY = setmetatable({prefix = "KEY_"}, KeyParser)
+	BTN = setmetatable({prefix = "BTN_"}, KeyParser)
+
 	return main(config_file)
 end

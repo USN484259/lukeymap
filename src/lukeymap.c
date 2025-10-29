@@ -57,6 +57,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		break;
 	}
 	case 'm':
+	{
 		char *endptr;
 		unsigned long long value = strtoull(arg, &endptr, 0);
 		if (endptr == arg)
@@ -83,6 +84,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		}
 		info->memory = (size_t)value;
 		break;
+	}
 	case 'l':
 		info->mlock = 1;
 		break;
