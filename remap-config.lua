@@ -1,3 +1,7 @@
+#!/usr/bin/env lua
+
+local EV_KEY = device.type_num("EV_KEY")
+
 return {{
 	-- match
 	{
@@ -16,8 +20,12 @@ return {{
 	-- rules
 	{{
 		-- ANother WAy TO IMplement CApsLOck DElay FIx
-		-- https://github.com/hexvalid/Linux-CapsLock-Delay-Fixer
-		{KEY.CAPSLOCK}, function (ev, arg, rule)
+		-- see also https://github.com/hexvalid/Linux-CapsLock-Delay-Fixer
+		{},
+		function (ev, key_state)
+			return ev.type == EV_KEY and ev.code == KEY.CAPSLOCK and ev.value == 1
+		end,
+		function (ev, arg, rule)
 			if arg then
 				return {
 					ev, {type = ev.type, code = ev.code, value = 0}

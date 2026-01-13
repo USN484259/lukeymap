@@ -19,24 +19,22 @@
 #define DEV_INPUT_PATH "/dev/input/"
 
 static const char * const doc = "Lua scripted key remapping program";
-static const char * const args_doc = "FILE [ param ... ]";
+static const char * const args_doc = "MAIN [ param ... ]";
 
 struct argp_info_t {
-	char *dir;
-	char *file;
+	char *main;
+	char **parameters;
 	size_t memory;
 	int nice;
 	int mlock;
 	unsigned time;
-	char **parameters;
 };
 
 static const struct argp_option options[] = {
-	{"dir", 'd', "DIR", 0, "set scripts dir"},
-	{"nice", 'n', "NICE", 0, "set nice value"},
-	{"memory", 'm', "MEMORY", 0, "pre-allocate memory for Lua runtime"},
-	{"lock", 'l', 0, 0, "lock memory using mlockall(2)"},
-	{"time", 't', "TIME", 0, "time limit in ms for each script call"},
+	{"nice", 'n', "NICE", 0, "set process priority using nice(2)"},
+	{"memory", 'm', "MEMORY", 0, "set memory limit for Lua runtime, supports K/M/G postfix"},
+	{"lock", 'l', 0, 0, "lock memory using mlockall(2), must be used with -m"},
+	{"time", 't', "TIME", 0, "set script running time limit in ms"},
 	{ 0 }
 };
 
@@ -44,9 +42,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
 	struct argp_info_t *info = state->input;
 	switch (key) {
-	case 'd':
-		info->dir = arg;
-		break;
 	case 'n':
 	{
 		char *endptr;
@@ -98,7 +93,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		break;
 	}
 	case ARGP_KEY_ARG:
-		info->file = arg;
+		info->main = arg;
 		info->parameters = &state->argv[state->next];
 		state->next = state->argc;
 		break;
@@ -108,18 +103,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 
 		if (info->mlock && info->memory == 0)
 			argp_error(state, "mlock requires memory limit set");
-#if 0
-		if (info->dir == NULL) {
-			char *sep = strrchr(info->file, '/');
-			if (sep) {
-				*sep = 0;
-				info->dir = info->file;
-				info->file = sep + 1;
-			} else {
-				info->dir = ".";
-			}
-		}
-#endif
 		break;
 	default:
 		return ARGP_ERR_UNKNOWN;
@@ -190,10 +173,9 @@ int main(int argc, char **argv)
 	struct lua_device_info_t lua_info = {
 		.poll_group = &poll_group,
 		.dev_dir_fd = -1,
-		.load_dir_fd = -1,
 	};
 	struct argp_info_t argp_info = {
-		.time = 1000,
+		.time = 1000
 	};
 
 	rc = argp_parse(&argp, argc, argv, 0, NULL, &argp_info);
@@ -210,15 +192,6 @@ int main(int argc, char **argv)
 		goto end;
 	} else {
 		lua_info.dev_dir_fd = rc;
-	}
-	if (argp_info.dir) {
-		rc = openat(AT_FDCWD, argp_info.dir, O_DIRECTORY | O_PATH);
-		if (rc < 0) {
-			rc = errno;
-			goto end;
-		} else {
-			lua_info.load_dir_fd = rc;
-		}
 	}
 	rc = device_monitor_init(&monitor, DEV_INPUT_PATH);
 	if (rc != 0)
@@ -258,12 +231,9 @@ int main(int argc, char **argv)
 	if (ls == NULL)
 		goto end;
 
-	rc = lua_device_set_args(ls, argp_info.file, argp_info.parameters);
-	// rc is argc for script
-	rc = lua_device_load(ls, rc);
-	if (rc != 0) {
+	rc = lua_device_start(ls, argp_info.main, argp_info.parameters);
+	if (rc != 0)
 		goto end;
-	}
 
 	rc = walk_devices(ls);
 	if (rc != 0)
@@ -317,8 +287,6 @@ end:
 		device_monitor_cleanup(&monitor);
 	if (lua_info.time_limit > 0)
 		timer_delete(lua_info.timer_id);
-	if (lua_info.load_dir_fd >= 0)
-		close(lua_info.load_dir_fd);
 	if (lua_info.dev_dir_fd >= 0)
 		close(lua_info.dev_dir_fd);
 	poll_group_cleanup(&poll_group);

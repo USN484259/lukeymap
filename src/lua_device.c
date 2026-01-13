@@ -14,36 +14,18 @@
 #include <sys/stat.h>
 #include <sys/timerfd.h>
 
-#if 0
-#include <sys/syscall.h>
-#include <linux/openat2.h>
-#endif
-
 #include <linux/input-event-codes.h>
 #include <libevdev/libevdev.h>
 #include <libevdev/libevdev-uinput.h>
 
 #include "poll_group.h"
 
-#define LUA_EXT_NAME ".lua"
-#define LUA_EXT_SIZE 4
-
 #define REG_FD_MAP "fd_map"
 #define REG_NAME_TIMER "timer"
 #define REG_NAME_EVDEV "evdev"
 #define REG_NAME_UINPUT "uinput"
 
-#if 0
-static inline int openat2(int dirfd, const char *path, unsigned flags, unsigned mode, unsigned resolve)
-{
-	struct open_how how = {
-		.flags = flags,
-		.mode = mode,
-		.resolve = resolve,
-	};
-	return syscall(SYS_openat2, dirfd, path, &how, sizeof how);
-}
-#endif
+static int lua_device_load(struct lua_State *ls, int narg);
 
 static int l_new_object(struct lua_State *ls)
 {
@@ -71,7 +53,10 @@ static int l_sys_meminfo(struct lua_State *ls)
 {
 	struct lua_device_info_t *info = *(struct lua_device_info_t **)lua_getextraspace(ls);
 	lua_pushinteger(ls, info->mem_usage);
-	lua_pushinteger(ls, info->mem_limit);
+	if (info->mem_limit)
+		lua_pushinteger(ls, info->mem_limit);
+	else
+		lua_pushnil(ls);
 	return 2;
 }
 
@@ -842,8 +827,18 @@ static int l_require(struct lua_State *ls)
 
 static inline void load_std_libraries(struct lua_State *ls)
 {
-	// open 'safe' libraries
 	luaopen_base(ls);
+	// remove 'unsafe' methods
+	lua_pushnil(ls);
+	lua_setfield(ls, -2, "dofile");
+	lua_pushnil(ls);
+	lua_setfield(ls, -2, "loadfile");
+	lua_pushnil(ls);
+	lua_setfield(ls, -2, "load");
+	lua_pushnil(ls);
+	lua_setfield(ls, -2, "loadstring");
+	lua_pop(ls, 1);
+
 	luaopen_coroutine(ls);
 	lua_setglobal(ls, "coroutine");
 	luaopen_table(ls);
@@ -857,16 +852,6 @@ static inline void load_std_libraries(struct lua_State *ls)
 	luaopen_math(ls);
 	lua_setglobal(ls, "math");
 
-	// remove 'unsafe' methods
-	lua_pushnil(ls);
-	lua_setglobal(ls, "dofile");
-	lua_pushnil(ls);
-	lua_setglobal(ls, "loadfile");
-	lua_pushnil(ls);
-	lua_setglobal(ls, "load");
-	lua_pushnil(ls);
-	lua_setglobal(ls, "loadstring");
-
 	// custom 'require' method
 	lua_pushcfunction(ls, l_require);
 	lua_setglobal(ls, "require");
@@ -876,7 +861,9 @@ static inline void load_device_libraries(struct lua_State *ls)
 {
 	// set sys table
 	luaL_newlib(ls, sys_table);
+	lua_pushvalue(ls, -1);
 	lua_setglobal(ls, "sys");
+	lua_pop(ls, 1);
 
 	// set timer methods
 	luaL_newmetatable(ls, REG_NAME_TIMER);
@@ -977,8 +964,9 @@ void lua_device_destroy(struct lua_State *ls)
 	lua_close(ls);
 }
 
-int lua_device_set_args(struct lua_State *ls, const char *main_name, char **args)
+int lua_device_start(struct lua_State *ls, const char *main_name, char **args)
 {
+	int rc;
 	int i = 0;
 
 	lua_pushstring(ls, main_name);
@@ -995,7 +983,12 @@ int lua_device_set_args(struct lua_State *ls, const char *main_name, char **args
 		}
 	}
 
-	return i + 1;
+	rc = lua_device_load(ls, i + 1);
+	if (rc != LUA_OK) {
+		fprintf(stderr, "%s\n", lua_tostring(ls, -1));
+		lua_pop(ls, 1);
+	}
+	return rc;
 }
 
 static inline void alarm_op(struct lua_State *ls, int startstop)
@@ -1016,7 +1009,7 @@ static inline void alarm_op(struct lua_State *ls, int startstop)
 		}
 		rc = timer_settime(info->timer_id, 0, &ts, NULL);
 		if (rc != 0)
-			fprintf(stderr, "cannot set alarm %d", errno);
+			fprintf(stderr, "cannot set alarm %d\n", errno);
 	}
 }
 #define alarm_start(ls) alarm_op(ls, 1)
@@ -1047,103 +1040,37 @@ static int lua_do_call(struct lua_State *ls, int narg, int nres)
 	return rc;
 }
 
-struct reader_context_t {
-	int fd;
-	char buffer[0x100];
-};
-
-static const char *lua_load_reader(struct lua_State *ls, void *data, size_t *size)
-{
-	struct reader_context_t *conx = (struct reader_context_t *)data;
-	ssize_t len = read(conx->fd, conx->buffer, sizeof(conx->buffer));
-	if (len < 0) {
-		luaL_error(ls, "failed in read: %d", errno);
-	}
-	*size = len;
-	return conx->buffer;
-}
-
-static inline int lua_load_open(int dir_fd, const char *filename)
-{
-	int rc;
-	int fd;
-	struct stat statbuf = { 0 };
-
-	// fd = openat2(dir_fd, filename, O_RDONLY, 0, RESOLVE_IN_ROOT);
-	fd = openat((dir_fd < 0) ? AT_FDCWD : dir_fd, filename, O_RDONLY | O_CLOEXEC | O_NOCTTY);
-	if (fd < 0)
-		return -errno;
-	rc = fstat(fd, &statbuf);
-	if (rc < 0 || (statbuf.st_mode & S_IFREG) == 0) {
-		rc = (rc < 0) ? -errno : -EINVAL;
-		close(fd);
-		return rc;
-	}
-	return fd;
-}
-
-static inline int check_filename(const char *path)
-{
-	while (*path) {
-		if (*path == '/' || *path == '.')
-			return EINVAL;
-		while (*path && *path++ != '/')
-			;
-	}
-	return 0;
-}
-
-int lua_device_load(struct lua_State *ls, int narg)
+static int lua_device_load(struct lua_State *ls, int narg)
 {
 	int rc;
 	int base;
 	const char *filename;
-	size_t sz_name;
-	struct reader_context_t conx;
-	struct lua_device_info_t *info = *(struct lua_device_info_t **)lua_getextraspace(ls);
 
 	base = lua_gettop(ls) - narg + 1;
-	filename = luaL_checklstring(ls, base, &sz_name);
+	filename = lua_tostring(ls, base);
 
-	rc = check_filename(filename);
-	if (rc != 0) {
-		fprintf(stderr, "invalid filename %s\n", filename);
-		goto err;
+	if (NULL != strstr(filename, "..")) {
+		lua_pushfstring(ls, "invalid path %s", filename);
+		return LUA_ERRRUN;
 	}
 
-	conx.fd = lua_load_open(info->load_dir_fd, filename);
-	if (conx.fd == -ENOENT && (sz_name < LUA_EXT_SIZE || 0 != strcmp(filename + sz_name - LUA_EXT_SIZE, LUA_EXT_NAME))) {
-		const char *alt_filename;
-		lua_pushvalue(ls, base);
-		lua_pushliteral(ls, LUA_EXT_NAME);
+	if (filename[0] == '/') {
+		rc = luaL_loadfilex(ls, filename, "t");
+	} else {
+		luaL_gsub(ls, filename, ".", "/");
+		lua_pushliteral(ls, ".lua");
 		lua_concat(ls, 2);
-		alt_filename = lua_tostring(ls, -1);
-		conx.fd = lua_load_open(info->load_dir_fd, alt_filename);
-		lua_pop(ls, 1);
+		rc = luaL_loadfilex(ls, lua_tostring(ls, -1), "t");
+		lua_replace(ls, -2);
 	}
-
-	if (conx.fd < 0) {
-		fprintf(stderr, "open failed %d: %s\n", conx.fd, filename);
-		goto err;
-	}
-
-	// push chunk name
-	lua_pushfstring(ls, "@%s", filename);
-	rc = lua_load(ls, lua_load_reader, &conx, lua_tostring(ls, -1), "t");
-	close(conx.fd);
 	if (rc != LUA_OK) {
-		fprintf(stderr, "%s\n", lua_tostring(ls, -1));
-		lua_insert(ls, base);
-		// also remove chunk name
-		lua_pop(ls, narg + 1);
+		// err msg already on stack
 		return rc;
 	}
 	// move chunk before args
 	lua_insert(ls, base);
-	// remove chunk name
-	lua_pop(ls, 1);
 
-	fprintf(stderr, "loading %s\n", filename);
+	// fprintf(stderr, "loading %s\n", modname);
 	rc = lua_do_call(ls, narg, LUA_MULTRET);
 
 	if (rc != LUA_OK) {
@@ -1152,9 +1079,6 @@ int lua_device_load(struct lua_State *ls, int narg)
 	}
 
 	return rc;
-err:
-	lua_pushfstring(ls, "cannot load %s", filename);
-	return LUA_ERRRUN;
 }
 
 int lua_device_event(struct lua_State *ls, int op, const char *dev_name)
@@ -1173,6 +1097,7 @@ int lua_device_event(struct lua_State *ls, int op, const char *dev_name)
 	lua_settop(ls, top);
 	return rc;
 }
+
 int lua_device_handle_fd(struct lua_State *ls, int fd)
 {
 	int rc = 0;

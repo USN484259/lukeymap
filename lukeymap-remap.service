@@ -1,0 +1,11 @@
+[Unit]
+Description=Lua scripted key remapping program
+
+[Service]
+Type=exec
+WorkingDirectory=/usr/local/lib/lukeymap/
+ExecStart=/usr/local/bin/lukeymap remap /etc/lukeymap/remap.conf
+Restart=always
+
+[Install]
+WantedBy=default.target

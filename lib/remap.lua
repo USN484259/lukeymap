@@ -9,10 +9,22 @@ local function table_join(a, b)
 	return table.move(b, 1, #b, #a + 1, a)
 end
 
+local function table_reverse(t)
+	local i = 1
+	local j = #t
+	while i < j do
+		t[i], t[j] = t[j], t[i]
+		i = i + 1
+		j = j - 1
+	end
+	return t
+end
+
 local KeyParser = {
 	__index = function(self, key)
 		local code, _ = device.code_num(self.prefix .. key)
 		if not code then error("unknown key " .. key) end
+		rawset(self, key, code)
 		return code
 	end
 }
@@ -40,7 +52,8 @@ local function load_config(config_file)
 end
 
 
-local function press_keys(result, keys, press, extra, skip)
+local function press_keys(keys, press, extra, skip)
+	local result = {}
 	for _, k in ipairs(keys) do
 		if skip and skip == k then
 		else
@@ -50,6 +63,9 @@ local function press_keys(result, keys, press, extra, skip)
 				value = press and 1 or 0,
 			})
 		end
+	end
+	if not press then
+		table_reverse(result)
 	end
 	if extra and (not skip or skip ~= extra) then
 		table.insert(result, {
@@ -69,12 +85,12 @@ local function default_handler(ev, target, rule)
 
 	if type(trigger) == "function" then trigger = nil end
 	if not key_down then
-		press_keys(result, target, false)
-		press_keys(result, keys, true, trigger, ev.code)
+		table_join(result, press_keys(target, false))
+		table_join(result, press_keys(keys, true, trigger, ev.code))
 		rule.active = false
 	elseif not rule.active then
-		press_keys(result, keys, false)
-		press_keys(result, target, true)
+		table_join(result, press_keys(keys, false))
+		table_join(result, press_keys(target, true))
 		rule.active = true
 	end
 	return result
