@@ -1,6 +1,7 @@
 #!/usr/bin/env lua
 
 local EV_KEY = device.type_num("EV_KEY")
+local LED_NUML, EV_LED = device.code_num("LED_NUML")
 
 return {{
 	-- match
@@ -35,21 +36,29 @@ return {{
 			end
 		end
 	}, {
+		{},
+		function(ev, key_state)
+			if ev.type == EV_LED and ev.code == LED_NUML then
+				key_state.numpad_off = (ev.value == 0)
+			end
+		end,
+		function (ev, arg, rule) end	-- never called
+	}, {
 		-- reuse numpad keys as shortcuts
-		{KEY.KP0}, {KEY.LEFTMETA}
+		{"numpad_off", KEY.KP0}, {KEY.LEFTMETA}
 	}, {
-		{KEY.KPDOT}, {KEY.LEFTCTRL, KEY.B}
+		{"numpad_off", KEY.KPDOT}, {KEY.LEFTCTRL, KEY.B}
 	}, {
-		{KEY.KP1}, {KEY.LEFTCTRL, KEY.X}
+		{"numpad_off", KEY.KP1}, {KEY.LEFTCTRL, KEY.X}
 	}, {
-		{KEY.KP2}, {KEY.LEFTCTRL, KEY.C}
+		{"numpad_off", KEY.KP2}, {KEY.LEFTCTRL, KEY.C}
 	}, {
-		{KEY.KP3}, {KEY.LEFTCTRL, KEY.V}
+		{"numpad_off", KEY.KP3}, {KEY.LEFTCTRL, KEY.V}
 	}, {
-		{KEY.KP4}, {KEY.LEFTCTRL, KEY.A}
+		{"numpad_off", KEY.KP4}, {KEY.LEFTCTRL, KEY.A}
 	}, {
-		{KEY.KP5}, {KEY.LEFTCTRL, KEY.S}
+		{"numpad_off", KEY.KP5}, {KEY.LEFTCTRL, KEY.S}
 	}, {
-		{KEY.KP6}, {KEY.LEFTCTRL, KEY.D}
+		{"numpad_off", KEY.KP6}, {KEY.LEFTCTRL, KEY.D}
 	}}
 }}

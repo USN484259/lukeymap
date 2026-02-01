@@ -145,7 +145,7 @@ For an activated *rule*, when **any** of the key in *watch* is physically releas
 
 The *rules* part is a *table* that contains one or more *rule*. Each *rule* contains two or three tables: the *mod* part, *trigger* part and *handler* part.
 
-+ The *mod* part is a *table* that contains zero or more key codes.
++ The *mod* part is a *table* that contains zero or more key codes or *virtual keys*.
 + The *trigger* part can be omitted, or be either a *function* or a key code.
 + The *handler* part can be either a *function* or a *table* of one or more key codes.
 + If the *trigger* part is a *function*, then *handler* part must also be a *function*.
@@ -154,6 +154,7 @@ The *rules* part is a *table* that contains one or more *rule*. Each *rule* cont
 
 The **remap** module also manages a *key_state* table for each device. In this table, key is the key code, and value is the current state of the key.
 When an input event is received and is key event, the *key_state* will update to reflect the key status change **before** processing *trigger* and/or *handler* of the *rule*.
+The *trigger* function is allowed to set non-integer keys in the *key_state*, to represent *virtual keys*. *virtual keys* can be used in *mod* part to implement *layers*. When reporting key press or release, *virtual keys* will be skipped. Note since the *virtual keys* are in the *key_state* table, they are viewable and settable by all *rules* of the same device.
 
 When a key press event is received, and *trigger* is a key code that matches the event, it will check in the *key_state* to see if **all** keys in *mod* is in pressed state. If so, the current *rule* will be *activated*.
 
@@ -166,6 +167,7 @@ When the *rule* is *activated* and *handler* is a *table*, and *rule.active* is 
 When the *rule* is *deactivated* and *handler* is a *table*, the keys in *handler* are reported released in reverse order, and keys in *mode* and *trigger* are reported pressed in order, excluding the key that caused the deactivation. It will also set *rule.active* to *false*.
 
 When *rule* is *activated* or *deactivated* and *handler* is a *function*, it is called with the *event object*, *arg* and the *rule* as parameters. If *activated*, *arg* is the value returned by *trigger*, or *true* if *trigger* is not a *function*. If *deactivated*, *arg* is *nil*. The *handler* function should return a table containing zero or more *event objects* that would be reported, or a *false* value to make the original event to be reported as is.
+
 *handler* function is allowed to use non-integer keys in *rule* table to store its own data and states.
 
 ```lua

@@ -56,7 +56,7 @@ local function press_keys(keys, press, extra, skip)
 	local result = {}
 	for _, k in ipairs(keys) do
 		if skip and skip == k then
-		else
+		elseif type(k) == "number" then
 			table.insert(result, {
 				type = EV_KEY,
 				code = k,
@@ -80,16 +80,20 @@ end
 
 local function default_handler(ev, target, rule)
 	local key_down = (ev.value > 0)
-	local keys, trigger = table.unpack(rule)
+
+	if key_down and rule.active then return end
+	if not (key_down or rule.active) then return end
+
+	local mod, trigger = table.unpack(rule)
 	local result = {}
 
 	if type(trigger) == "function" then trigger = nil end
 	if not key_down then
 		table_join(result, press_keys(target, false))
-		table_join(result, press_keys(keys, true, trigger, ev.code))
+		table_join(result, press_keys(mod, true, trigger, ev.code))
 		rule.active = false
-	elseif not rule.active then
-		table_join(result, press_keys(keys, false))
+	else
+		table_join(result, press_keys(mod, false))
 		table_join(result, press_keys(target, true))
 		rule.active = true
 	end
@@ -148,6 +152,11 @@ local function remap_custom(rules, key_state, ev)
 	for i, rule in ipairs(rules) do
 		local mod, trigger, handler = table.unpack(rule)
 		if type(trigger) ~= "function" then goto _continue end
+
+		for _, k in ipairs(mod) do
+			if not key_state[k] then goto _continue end
+		end
+
 		local arg = trigger(ev, key_state)
 		if not arg then goto _continue end
 
