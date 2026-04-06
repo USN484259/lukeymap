@@ -107,7 +107,7 @@ static int l_timer_close(struct lua_State *ls)
 {
 	int fd;
 	struct lua_device_info_t *info = *(struct lua_device_info_t **)lua_getextraspace(ls);
-	fd = (int)*(uintptr_t *)luaL_checkudata(ls, 1, REG_NAME_TIMER);
+	fd = *(int *)luaL_checkudata(ls, 1, REG_NAME_TIMER);
 
 	poll_group_del(info->poll_group, fd);
 	close(fd);
@@ -124,9 +124,9 @@ static int l_timer_close(struct lua_State *ls)
 static int l_timer_handler(struct  lua_State *ls)
 {
 	int nargs;
-	struct libevdev *dev;
-	dev = *(struct libevdev **)luaL_checkudata(ls, 1, REG_NAME_TIMER);
-	(void) dev;
+	int fd;
+	fd = *(int *)luaL_checkudata(ls, 1, REG_NAME_TIMER);
+	(void) fd;
 	nargs = lua_gettop(ls);
 
 	lua_getuservalue(ls, 1);
@@ -251,11 +251,15 @@ static int l_evdev_close(struct lua_State *ls)
 {
 	int fd;
 	struct libevdev *dev;
+	struct lua_device_info_t *info = *(struct lua_device_info_t **)lua_getextraspace(ls);
+
 	dev = *(struct libevdev **)luaL_checkudata(ls, 1, REG_NAME_EVDEV);
 	fd = libevdev_get_fd(dev);
 	libevdev_free(dev);
-	if (fd >= 0)
+	if (fd >= 0) {
+		poll_group_del(info->poll_group, fd);
 		close(fd);
+	}
 
 	lua_pushnil(ls);
 	lua_setmetatable(ls, -2);
@@ -484,6 +488,37 @@ static int l_evdev_read(struct lua_State *ls)
 	if (rc != -EAGAIN && count == 0)
 		return luaL_error(ls, "cannot read device: %d", rc);
 	return 1;
+}
+
+static int l_evdev_led(struct lua_State *ls)
+{
+	int rc;
+	int index;
+	struct libevdev *dev;
+	uint32_t led_status = 0;	// assuming LED_CNT is less than 32
+
+	dev = *(struct libevdev **)luaL_checkudata(ls, 1, REG_NAME_EVDEV);
+
+	index = luaL_optinteger(ls, 2, -1);
+	if (index >= LED_CNT)
+		return luaL_error(ls, "LED out of range: %d", index);
+
+	rc = ioctl(libevdev_get_fd(dev), EVIOCGLED(sizeof(led_status)), &led_status);
+	if (rc < 0)
+		return luaL_error(ls, "cannot get LED: %s", strerror(errno));
+
+	if (index >= 0) {
+		lua_pushboolean(ls, led_status & (1 << index));
+		return 1;
+	}
+
+	lua_newtable(ls);
+	for (index = 0; index < LED_CNT; index++) {
+		lua_pushboolean(ls, led_status & (1 << index));
+		lua_seti(ls, -2, index);
+	}
+	return 1;
+
 }
 
 #define EVDEV_SET_STR(ls, dev, key)		\
@@ -799,6 +834,7 @@ static const struct luaL_Reg evdev_methods[] = {
 	{"monitor", l_evdev_monitor},
 	{"grab", l_evdev_grab},
 	{"read", l_evdev_read},
+	{"led", l_evdev_led},
 	{NULL, NULL}
 };
 

@@ -34,7 +34,7 @@ static const struct argp_option options[] = {
 	{"nice", 'n', "NICE", 0, "set process priority using nice(2)"},
 	{"memory", 'm', "MEMORY", 0, "set memory limit for Lua runtime, supports K/M/G postfix"},
 	{"lock", 'l', 0, 0, "lock memory using mlockall(2), must be used with -m"},
-	{"time", 't', "TIME", 0, "set script running time limit in ms"},
+	{"time", 't', "TIME", 0, "set script running time limit in ms, default 1000, set 0 to disable"},
 	{ 0 }
 };
 
@@ -156,8 +156,11 @@ static inline int walk_devices(struct lua_State *ls)
 			rc = errno;
 			break;
 		}
-		if (entry->d_type == DT_CHR)
-			lua_device_event(ls, 1, entry->d_name);
+		if (entry->d_type == DT_CHR) {
+			rc = lua_device_event(ls, 1, entry->d_name);
+			if (rc != 0)
+				break;
+		}
 	}
 	closedir(dir);
 	return rc;
@@ -271,11 +274,15 @@ int main(int argc, char **argv)
 				// fallthrough
 				case DEVICE_MONITOR_EVENT_DEL:
 					rc = lua_device_event(ls, (event == DEVICE_MONITOR_EVENT_ADD), name);
+					if (rc != 0)
+						goto end;
 					break;
 				}
 			} while (1);
 		} else {
 			rc = lua_device_handle_fd(ls, fd);
+			if (rc != 0)
+				goto end;
 		}
 	}
 

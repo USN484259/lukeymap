@@ -30,29 +30,11 @@ local KeyParser = {
 }
 
 local function load_config(config_file)
-	local raw_config = require(config_file)
-	local config = {}
-	for i, entry in ipairs(raw_config) do
-		local match, raw_rules = table.unpack(entry)
-		local rules = {}
-		for _, rule in ipairs(raw_rules) do
-			local mod, trigger, handler
-			if #rule < 3 then
-				mod, handler = table.unpack(rule)
-				trigger = mod[#mod]
-				table.remove(mod)
-			else
-				mod, trigger, handler = table.unpack(rule)
-			end
-			table.insert(rules, {mod, trigger, handler})
-		end
-		table.insert(config, {match, rules})
-	end
-	return config
+	return require(config_file)
 end
 
 
-local function press_keys(keys, press, extra, skip)
+local function press_keys(keys, press, skip)
 	local result = {}
 	for _, k in ipairs(keys) do
 		if skip and skip == k then
@@ -67,13 +49,6 @@ local function press_keys(keys, press, extra, skip)
 	if not press then
 		table_reverse(result)
 	end
-	if extra and (not skip or skip ~= extra) then
-		table.insert(result, {
-			type = EV_KEY,
-			code = extra,
-			value = press and 1 or 0,
-		})
-	end
 	return result
 end
 
@@ -84,62 +59,52 @@ local function default_handler(ev, target, rule)
 	if key_down and rule.active then return end
 	if not (key_down or rule.active) then return end
 
-	local mod, trigger = table.unpack(rule)
+	local mod, handler = table.unpack(rule)
 	local result = {}
 
-	if type(trigger) == "function" then trigger = nil end
 	if not key_down then
 		table_join(result, press_keys(target, false))
-		table_join(result, press_keys(mod, true, trigger, ev.code))
+		table_join(result, press_keys(mod, true, ev.code))
 		rule.active = false
 	else
-		table_join(result, press_keys(mod, false))
+		table_join(result, press_keys(mod, false, ev.code))
 		table_join(result, press_keys(target, true))
 		rule.active = true
 	end
 	return result
 end
 
-local function remap_keys(rules, key_state, ev)
+local function remap_keys(dev, rules, key_state, ev)
 	local key_down = (ev.value > 0)
 	key_state[ev.code] = key_down
 
 	for i, rule in ipairs(rules) do
-		local mod, trigger, handler = table.unpack(rule)
-		local is_func = (type(trigger) == "function")
-
+		local mod, handler = table.unpack(rule)
+		local is_func = (type(handler) == "function")
 		local arg = nil
 
 		if key_down then
 			if not is_func then
-				if trigger ~= ev.code then goto _continue end
+				if mod[#mod] ~= ev.code then goto _continue end
 			end
 
-			for _, k in ipairs(mod) do
-				if not key_state[k] then goto _continue end
+			for i, k in ipairs(mod) do
+				if i ~= #mod and not key_state[k] then goto _continue end
 			end
-
-			if is_func then
-				arg = trigger(ev, key_state)
-				if not arg then goto _continue end
-			else
-				arg = true
-			end
+			arg = ev
 		else
-			local release = (not is_func and trigger == ev.code)
-			if not release then
-				for _, k in ipairs(mod) do
-					if not key_state[k] then
-						release = true
-						break
-					end
+			for _, k in ipairs(mod) do
+				if k == ev.code then
+					arg = false
+					break
 				end
 			end
-			if not release then goto _continue end
+			if arg == nil then goto _continue end
 		end
 
-		if type(handler) == "function" then
-			return handler(ev, arg, rule)
+		if is_func then
+			local result = handler(arg, key_state, rule, dev)
+			if result then return result end
 		else
 			return default_handler(ev, handler, rule)
 		end
@@ -148,36 +113,30 @@ local function remap_keys(rules, key_state, ev)
 	end
 end
 
-local function remap_custom(rules, key_state, ev)
+local function remap_custom(dev, rules, key_state, ev)
 	for i, rule in ipairs(rules) do
-		local mod, trigger, handler = table.unpack(rule)
-		if type(trigger) ~= "function" then goto _continue end
+		local mod, handler = table.unpack(rule)
+		if type(handler) ~= "function" then goto _continue end
 
 		for _, k in ipairs(mod) do
 			if not key_state[k] then goto _continue end
 		end
 
-		local arg = trigger(ev, key_state)
-		if not arg then goto _continue end
-
-		if type(handler) == "function" then
-			return handler(ev, arg, rule)
-		else
-			return default_handler(ev, handler, rule)
-		end
+		local result = handler(ev, key_state, rule, dev)
+		if result then return result end
 
 	::_continue::
 	end
 end
 
-local function remap(rules, key_state, ev_list)
+local function remap(dev, rules, key_state, ev_list)
 	local new_list = {}
 	for _, ev in ipairs(ev_list) do
 		local result = nil
 		if ev.type == EV_KEY then
-			result = remap_keys(rules, key_state, ev)
+			result = remap_keys(dev, rules, key_state, ev)
 		else
-			result = remap_custom(rules, key_state, ev)
+			result = remap_custom(dev, rules, key_state, ev)
 		end
 		if result then
 			new_list = table_join(new_list, result)
@@ -195,7 +154,7 @@ local function handle_event(dev)
 	local rec = device_map[dev]
 	if not rec then return end
 	local ev_list = dev:read()
-	ev_list = remap(rec.rules, rec.key_state, ev_list)
+	ev_list = remap(dev, rec.rules, rec.key_state, ev_list)
 	rec.sink:write(ev_list)
 end
 
@@ -249,7 +208,7 @@ end
 
 
 if module_name == sys.main then
-	-- global KEY and BTN
+	-- global objects
 	KEY = setmetatable({prefix = "KEY_"}, KeyParser)
 	BTN = setmetatable({prefix = "BTN_"}, KeyParser)
 

@@ -10,7 +10,7 @@ lukeymap [options] main_module [params]
 ```
 Options:
 + -n, --nice=NICE		set the priority using nice(2)
-+ -t, --time=TIME		set script running time limit in ms
++ -t, --time=TIME		set script running time limit in ms, default 1000, set 0 to disable
 + -m, --memory=MEMORY	set memory limit for Lua runtime, supports K/M/G postfix
 + -l, --lock			lock memory using mlockall(2), must be used with -m
 
@@ -123,54 +123,38 @@ end
 
 ```
 
+### The rules part
 
-### The rules part (simple)
+The *rules* part is a *table* that contains one or more *rule*. Each *rule* contains two tables: the *mod* part and *handler* part.
 
-The *rules* part is a *table* that contains one or more *rule*. Each *rule* contains two tables: *watch* and *target*. The *watch* and *target* are *table* of one or more key codes.
++ The *mod* part is a *table* that contains zero or more key codes or *virtual keys*.
++ The *handler* part can be either a *function* or a *table* of one or more key codes.
+
+The **remap** module also manages a *key_state* table for each device. In this table, key is the key code, and value is the physical state of the key.
+When an input event is received and is key event, the *key_state* will update to reflect the key status change **before** processing the *rule*.
+The *handler* function is allowed to set non-integer keys in the *key_state*, to represent *virtual keys*. *virtual keys* can be used in *mod* part to implement *layers*. When reporting key press or release, *virtual keys* will be skipped. Note since the *virtual keys* are in the *key_state* table, they are viewable and settable by all *rules* of the same device.
+
+If the *handler* is a *table* :
++ For a deactivated *rule*, When all keys in he *mod* are physically pressed, **and** the last pressed key is the last element in *mod*, this *rule* is *activated*. The keys in *mod* are reported released in reverse order, and keys in *target* are reported pressed in order.
++ For an activated *rule*, when **any** of the key in *mod* is physically released, it is *deactivated*. The keys in *target* are reported released in reverse order, then keys in *mod* are reported pressed in order, except the physically released key.
+
+If the *handler* is a *function* :
++ When an event is received and all keys in *mod* are physically pressed, the *rule* is *activated*, the *function* is called with *arg* set to *event object*.
++ For an activated *rule*, when **any** of the key in *mod* is physically released, the *rule* is *deactivated*, the *function* is called with *arg* set to a *false* value.
++ When *rule* is *activated* or *deactivated*, *function* is called with *arg*, *key_state*, *rule* and *dev* as parameters.
++ If the *rule* matches, the *handler* function should return a table containing zero or more *event objects* that would be reported instead of the original *event object*. If one *rule* matches, all following *rule* will **not** be processed.
++ If the *rule* does not match, the *handler* function should return *nil*, and processing of following *rule* continues. If none of the *rule* matches, the original *event object* is reported as is.
++ The *handler* function is allowed to use non-integer keys in *rule* table to store its own data and states.
+
 
 ```lua
+-- simple key remap examples
 local rules_1 = {
 	{ {KEY.KP0}, {KEY.LEFTMETA} },
 	{ {KEY.KPDOT}, {KEY.LEFTCTRL, KEY.C} },
 	{ {KEY.RIGHTCTRL, KEY.RIGHTSHIFT, BTN.LEFT}, {KEY.LEFTMETA, BTN.LEFT} },
 }
-```
 
-When all keys in he *watch* are physically pressed, **and** the last pressed key is the last element in *watch*, this *rule* is *activated*. The keys in *watch* are reported released in reverse order, and keys in *target* are reported pressed in order.
-
-For an activated *rule*, when **any** of the key in *watch* is physically released, it is *deactivated*. The keys in *target* are reported released in reverse order, then keys in *watch* are reported pressed in order, except the physically released key.
-
-
-### The rules part (detailed)
-
-The *rules* part is a *table* that contains one or more *rule*. Each *rule* contains two or three tables: the *mod* part, *trigger* part and *handler* part.
-
-+ The *mod* part is a *table* that contains zero or more key codes or *virtual keys*.
-+ The *trigger* part can be omitted, or be either a *function* or a key code.
-+ The *handler* part can be either a *function* or a *table* of one or more key codes.
-+ If the *trigger* part is a *function*, then *handler* part must also be a *function*.
-+ If *trigger* part is omitted, the last key code in *mod* part will be poped and become the *trigger* part.
-
-
-The **remap** module also manages a *key_state* table for each device. In this table, key is the key code, and value is the current state of the key.
-When an input event is received and is key event, the *key_state* will update to reflect the key status change **before** processing *trigger* and/or *handler* of the *rule*.
-The *trigger* function is allowed to set non-integer keys in the *key_state*, to represent *virtual keys*. *virtual keys* can be used in *mod* part to implement *layers*. When reporting key press or release, *virtual keys* will be skipped. Note since the *virtual keys* are in the *key_state* table, they are viewable and settable by all *rules* of the same device.
-
-When a key press event is received, and *trigger* is a key code that matches the event, it will check in the *key_state* to see if **all** keys in *mod* is in pressed state. If so, the current *rule* will be *activated*.
-
-When a key release event is received, it will check in the *key_state* to see if **any** key in *mod* is in released state, or if *trigger* is a key code that matches the event. If so, the current *rule* will be *deactivated*.
-
-If an event is received and *trigger* is a *function*, the *trigger* is called with the *event object* and the *key_state* as parameters. If it returns a *true* value, the the current *rule* will be *activated*.
-
-When the *rule* is *activated* and *handler* is a *table*, and *rule.active* is a *false* value, the keys in *mod* and *trigger* are reported released in reverse order, and keys in *handler* are reported pressed in order. It will also set *rule.active* to *true* to prevent re-activation.
-
-When the *rule* is *deactivated* and *handler* is a *table*, the keys in *handler* are reported released in reverse order, and keys in *mode* and *trigger* are reported pressed in order, excluding the key that caused the deactivation. It will also set *rule.active* to *false*.
-
-When *rule* is *activated* or *deactivated* and *handler* is a *function*, it is called with the *event object*, *arg* and the *rule* as parameters. If *activated*, *arg* is the value returned by *trigger*, or *true* if *trigger* is not a *function*. If *deactivated*, *arg* is *nil*. The *handler* function should return a table containing zero or more *event objects* that would be reported, or a *false* value to make the original event to be reported as is.
-
-*handler* function is allowed to use non-integer keys in *rule* table to store its own data and states.
-
-```lua
 -- ANother WAy TO IMplement CApsLOck DElay FIx
 -- see also https://github.com/hexvalid/Linux-CapsLock-Delay-Fixer
 
@@ -180,19 +164,16 @@ local rules_2 = {{
 	-- mod
 	{},
 
-	-- trigger
-	function(ev, key_state)
-		return ev.type == EV_KEY and ev.code == KEY.CAPSLOCK and ev.value == 1
-	end,
-
 	-- handler
 	function (ev, arg, rule)
-		if arg then
-			return {
-				ev, {type = ev.type, code = ev.code, value = 0}
-			}
-		else
-			return {}
+		if ev and ev.type == EV_KEY and ev.code == KEY.CAPSLOCK then
+			if ev.value == 1 then
+				return {
+					ev, {type = ev.type, code = ev.code, value = 0}
+				}
+			else
+				return {}
+			end
 		end
 	end
 }}
@@ -302,6 +283,8 @@ An *evdev object* represents an open Linux input device, as returned by *device.
 **evdev:read** ()
 : Reads and returns an array of incoming input events from the device. Each event is represented as a *table* with fields type, code and value.
 
+**evdev:led** ([index])
+: Reads the LED state of the device. If *index* is provided, returns *boolean* state of the selected LED. If omitted, returns a table of *boolean* states of all LEDs.
 
 ### uinput object
 

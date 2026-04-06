@@ -4,8 +4,8 @@ Description=Lua scripted key remapping program
 [Service]
 Type=exec
 WorkingDirectory=/usr/local/lib/lukeymap/
-ExecStart=/usr/local/bin/lukeymap remap /etc/lukeymap/remap.conf
-Restart=always
+ExecStart=/usr/local/bin/lukeymap -n -20 -m 16M -l remap /etc/lukeymap/remap.conf
+Restart=no
 
 [Install]
 WantedBy=default.target
